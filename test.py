@@ -1,9 +1,9 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-bot = telebot.TeleBot('5979202898:AAFC_cOHUOoTtrREVhMiaC1oBtGjrq64stc')
+bot = telebot.TeleBot('')
 goods = []
 user_goods = {}
-admin_id = '1231797433'
+admin_id = ''
 @bot.message_handler(commands=['start'])
 def start(message):
     keyboard = InlineKeyboardMarkup()
