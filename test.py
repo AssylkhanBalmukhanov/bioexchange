@@ -1,80 +1,82 @@
+from openai import OpenAI
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-bot = telebot.TeleBot('')
-goods = []
-user_goods = {}
-admin_id = ''
-@bot.message_handler(commands=['start'])
-def start(message):
-    keyboard = InlineKeyboardMarkup()
-    sell_button = InlineKeyboardButton('Sell', callback_data='sell')
-    buy_button = InlineKeyboardButton('Buy', callback_data='buy')
-    my_goods_button = InlineKeyboardButton('My Goods', callback_data='my_goods')
-    report_button = InlineKeyboardButton('Report', callback_data='report')
-    keyboard.add(sell_button, buy_button, my_goods_button, report_button)
-    bot.send_message(message.chat.id, 'Choose a command:', reply_markup=keyboard)
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    if call.data == 'sell':
-        bot.send_message(call.message.chat.id, "What is the name of the good?")
-        bot.register_next_step_handler(call.message, sell_price)
-    elif call.data == 'buy':
-        if len(goods) == 0:
-            bot.send_message(call.message.chat.id, "There are no goods available for purchase.")
-        else:
-            for good in goods:
-                bot.send_message(call.message.chat.id, f"Name: {good['name']}\nPrice: {good['price']}\nContacts: {good['contacts']}")
-    elif call.data == 'my_goods':
-        user_goods = [good for good in goods if good['seller_id'] == call.from_user.id]
-        if len(user_goods) == 0:
-            bot.send_message(call.message.chat.id, "You haven't added any goods yet.")
-        else:
-            for good in user_goods:
-                bot.send_message(call.message.chat.id, f"Name: {good['name']}\nPrice: {good['price']}\nContacts: {good['contacts']}")
-                keyboard = InlineKeyboardMarkup()
-                remove_button = InlineKeyboardButton('Remove', callback_data=f'remove {good["name"]}')
-                keyboard.add(remove_button)
-                bot.send_message(call.message.chat.id, 'Choose an action:', reply_markup=keyboard)
-    elif call.data.startswith('remove'):
-        name = call.data.split()[1]
-        user_goods = [good for good in goods if good['seller_id'] == call.from_user.id]
-        for i, good in enumerate(user_goods):
-            if good['name'] == name:
-                del goods[i]
-                bot.send_message(call.message.chat.id, f"{name} has been removed from the list of goods.")
-                return
-        bot.send_message(call.message.chat.id, f"Sorry, {name} was not found in your list of goods.")
-    elif call.data == 'report':
-        bot.send_message(call.message.chat.id, "Please enter your report:")
-        bot.register_next_step_handler(call.message, lambda msg: report(msg))
+from telebot import types
+import logging
+import requests
+from gtts import gTTS
+import io
+from tempfile import TemporaryFile
+import speech_recognition as sr
+from pydub import AudioSegment
+import re
+import json
+
+import os 
+
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+					level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+token = ''
+os.environ["OPENAI_API_KEY"] = ""
+client = OpenAI(
+	api_key=os.environ.get(""),
+)
 
 
-def sell_price(message):
-    name = message.text
-    bot.send_message(message.chat.id, "What is the price of the good?")
-    bot.register_next_step_handler(message, lambda msg, n=name: add_contact(msg, n))
+
+ai_role = "You are assistant that helps his student ace his UNT exam, answer the question in english"
+
+admin_id = '1231797433'
+bot = telebot.TeleBot(token)
+# Function to generate a menu
+def menu(buttons):
+    markup = types.ReplyKeyboardMarkup(row_width=1)
+    for button in buttons:
+        markup.add(types.KeyboardButton(button))
+    return markup
+@bot.message_handler(commands=['ask_ai'])
+def ask_ai(message):
+    # Ask the user to type their question
+    msg_bot = bot.send_message(message.chat.id, "Ask a question to AI. Type your question:")
+    
+    # Register the next step handler for the user's question
+    bot.register_next_step_handler(msg_bot, help_ai_voice_response)
+
+def help_ai_voice_response(message):
+    # Process the user's text question and get the AI response
+    response = ai_message(message.text)
+    
+    # Convert AI response to a voice message
+    tts = gTTS(text=response, lang='en')
+    voice_file = TemporaryFile()
+    tts.write_to_fp(voice_file)
+    voice_file.seek(0)
+
+    # Send the voice message back to the user
+    bot.send_voice(message.chat.id, voice_file)
+    
+
+def ai_message(message):
+	try:
+		completion = client.chat.completions.create(
+			model="gpt-3.5-turbo",
+			messages=[
+				{"role": "system", "content": ai_role},
+				{"role": "user", "content": f"{message}"}
+			]
+		)
+		res_message = completion.choices[0].message.content 
+		print(res_message)
+		return res_message
+
+	except Exception as e:
+		return f"An error occurred: {str(e)}"
 
 
-def add_contact(message, name):
-    price = message.text
-    bot.send_message(message.chat.id, "What are your contacts?")
-    bot.register_next_step_handler(message, lambda msg, n=name, p=price: add_to_base(msg, n, p, message.from_user.id))
 
-def add_to_base(message, name, price, seller_id):
-    contacts = message.text
-    goods.append({"name": name, "price": price, "contacts": contacts, "seller_id": seller_id})
-    bot.send_message(message.chat.id, "The good has been added to the list.")
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('remove'))
-def remove_good(call):
-    name = call.data.split()[1]
-    user_goods = [good for good in goods if good['seller_id'] == call.from_user.id]
-    for i, good in enumerate(user_goods):
-        if good['name'] == name:
-            del goods[i]
-            bot.send_message(call.message.chat.id, f"{name} has been removed from the list of goods.")
-            return
-    bot.send_message(call.message.chat.id, f"Sorry, {name} was not found in your list of goods.")
+def help_ai(message):
+	bot.reply_to(message, ai_message(message.text))
 
 @bot.message_handler(commands=['report'])
 def report(msg):
@@ -94,6 +96,69 @@ def report_callback_handler(call):
     bot.send_message(call.message.chat.id, "Please enter your report:")
     bot.register_next_step_handler(call.message, handle_report)
 
+
+
+# Function to handle the /programming_courses command
+@bot.message_handler(commands=['programming_courses'])
+def programming_courses(message):
+    courses_text = "Here are some programming courses:\n1. Introduction to Python\n2. Web Development with Django\n3. Machine Learning with Python"
+    bot.send_message(message.chat.id, courses_text)
+
+# Function to handle the /unt_topics command
+@bot.message_handler(commands=['unt_topics'])
+def unt_topics(message):
+    topics_buttons = ['Systems of numbers in computer science: number conversion',
+                      'Data Storage and Memory in Computer Science',
+                      'Networks and Their Topologies in Computer Science',
+                      'Fundamentals of Databases and Relational Database Management Systems (RDBMS)']
+    msg_bot = bot.send_message(message.chat.id, "Please choose a UNT topic", reply_markup=menu(topics_buttons))
+    bot.register_next_step_handler(msg_bot, unt_topic_selected)
+
+# Function to handle the chosen UNT topic
+def unt_topic_selected(message):
+    selected_topic = message.text.strip()    
+    explanation_prompt = f"Explain {selected_topic} with examples. Answer in the english language ."
+    explanation = ai_message(explanation_prompt)
+    bot.send_message(message.chat.id, f"{explanation}")
+
+# Function to handle the /start and /help commands
+@bot.message_handler(commands=['start', 'help'])
+def welcome(message):
+    bot.reply_to(message, "Welcome! You can use the following commands:\n/ask_ai - Ask a question to AI\n/report - Report an issue\n/programming_courses - View programming courses\n/unt_topics - Choose a UNT topic(to see two or more topics repeat the process)")
+
+#tts and stt
+def text_to_speech (message):
+	# Get the text message
+	text = message.text
+	# Generate audio file using the Google TTS API
+	tts = gTTS(text=text)
+	audio_file = TemporaryFile()
+	tts.write_to_fp(audio_file) 
+	audio_file.seek(0)
+	# Convert audio file to ogg format and send to user
+	audio = AudioSegment.from_file (audio_file, format="mp3")
+	ogg_file = TemporaryFile()
+	audio.export(ogg_file, format="ogg")
+	ogg_file.seek(0)
+	bot.send_voice (message.chat.id, ogg_file)
+      
+def voice_query(message): 
+	if message.voice:
+		# Get the voice recording file
+		file_info = bot.get_file(message.voice.file_id)
+		file_url = 'https://api.telegram.org/file/bot{0}/{1}'.format(token, file_info.file_path) 
+		voice_file = requests.get(file_url)
+		# Convert voice file to audio and then to text using the Google TTS API
+		audio = AudioSegment.from_file(io.BytesIO(voice_file.content))
+		audio_file = TemporaryFile()
+		audio.export(audio_file, format="wav")
+		audio_file.seek(0)
+		r = sr.Recognizer()
+		with sr.AudioFile(audio_file) as source: audio_data = r.record(source)
+		text=r.recognize_google (audio_data)
+		# Send the text message back to the user response = generate_response(text) bot.reply_to(message, response)
+	else:
+		bot.reply_to(message, "Please send a voice recording.")
 
 
 
